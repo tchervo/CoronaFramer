@@ -1,6 +1,7 @@
 import os
 import datetime as dt
 import logging
+import argparse
 from urllib import request
 from datetime import datetime
 
@@ -14,9 +15,10 @@ log_path = os.getcwd() + '/logs/'
 now = datetime.now()
 
 # Built in variables that will likely be of common interest
-interest_variables = ['B19326_001E', 'B01002_001E', 'B01001_001E', 'B08006_008E', 'B27001_001E']
+interest_variables = ['B19326_001E', 'B01002_001E', 'B01001_001E', 'B08006_008E', 'B27001_001E', 'B28007_009E']
 variable_name_map = {'B19326_001E': 'med_income', 'B01002_001E': 'age', 'B01001_001E': 'pop_size',
-                     'B08006_008E': 'tot_public_transit_users', 'B27001_001E': 'tot_health_insurance'}
+                     'B08006_008E': 'tot_public_transit_users', 'B27001_001E': 'tot_health_insurance',
+                     'B28007_009E': 'tot_unemployed'}
 
 if os.path.exists(log_path) is not True:
     os.mkdir(log_path)
@@ -24,6 +26,24 @@ if os.path.exists(log_path) is not True:
 log_format = '%(levelname)s | %(asctime)s | %(message)s'
 logging.basicConfig(filename=log_path + 'coronaframer.log', format=log_format, filemode='w', level=logging.INFO)
 logger = logging.getLogger()
+
+arg_parser = argparse.ArgumentParser(
+    description='Combine demographic data from the U.S Census with COVID-19 data',
+    prog='CoronaFramer'
+)
+
+arg_parser.add_argument('-s', '--states', nargs='+', help='Specify the state or states to gather info on',
+                        action='append')
+arg_parser.add_argument('-c', '--counties', nargs='*', default='ALL',
+                        help='Specify the counties to include. Default is all', action='append')
+arg_parser.add_argument('-i', '--interactive', action='store_true',
+                        help="Sets the program to run in interactive mode.")
+arg_parser.add_argument('-sm', '--select_mode', nargs=1, default='positive', choices=['positive', 'negative'],
+                        help='Selection mode for counties. Positive selects only the specified counties, negative '
+                             'select chooses all counties in the state except for those counties. Default is positive.')
+arg_parser.add_argument('-v', '--variables', nargs='*', default='DEFAULT',
+                        help='Which census variables to select. Default is all default variables included with this '
+                             'program')
 
 
 def get_nyt_data(loc_type='counties', date_filter='now') -> pd.DataFrame:
@@ -175,11 +195,24 @@ def build_frame_for_state(state: str, variables: list, save=True, rename_map={})
     return state_covid_data
 
 
-def main(interactive=True):
-    if interactive:
+def main():
+    args = arg_parser.parse_args()
+
+    if args.interactive:
+        logger.info('Starting CoronaFramer in interactive mode')
         state = input('Please enter the state you are interested in: ')
         logger.info(f'Attempting to build frame for {state}')
+
         build_frame_for_state(state, interest_variables, rename_map=variable_name_map)
+
+        run_again = input('Finished output! Would you like to run the program again? (Y/N) ').lower() == 'y'
+
+        if run_again:
+            main()
+        else:
+            print('Exiting...')
+    else:
+        logger.info('Starting CoronaFramer in CLI mode')
 
 
 if __name__ == '__main__':
