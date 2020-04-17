@@ -32,8 +32,7 @@ arg_parser = argparse.ArgumentParser(
     prog='CoronaFramer'
 )
 
-arg_parser.add_argument('-s', '--states', nargs='+', help='Specify the state or states to gather info on',
-                        action='append')
+arg_parser.add_argument('-s', '--states', nargs='+', help='Specify the state or states to gather info on')
 arg_parser.add_argument('-c', '--counties', nargs='*', default='ALL',
                         help='Specify the counties to include. Default is all', action='append')
 arg_parser.add_argument('-i', '--interactive', action='store_true',
@@ -134,9 +133,14 @@ def get_state_fips(state: str) -> str:
     return state_pairs[0]
 
 
-def build_frame_for_state(state: str, variables: list, save=True, rename_map={}) -> pd.DataFrame:
+def build_frame_for_state(state: str, variables: list, save=True, rename_map={}, counties='all',
+                          selection_mode='positive') -> pd.DataFrame:
     """
     Builds a DataFrame with the requested variables
+    :param selection_mode: Positive or negative selection for the chosen counties. Positive selection only includes
+    those counties, negative selection chooses all counties except for the listed ones. Default is positive
+    :param counties: What counties should be targeted by the selection mode. Default is all. If not using all counties,
+    then the counties should be entered as a list
     :param rename_map: Dictionary used to rename variables. Optional
     :param save: Should the DataFrame be saved? Default is true
     :param variables: The Census variables to download
@@ -158,7 +162,20 @@ def build_frame_for_state(state: str, variables: list, save=True, rename_map={})
 
     state_covid_data = state_covid_data[state_covid_data['state'] == state]
 
-    for county in county_data:
+    if counties != 'all':
+        if selection_mode.lower() == 'positive':
+            state_covid_data = state_covid_data[state_covid_data['county'].isin(counties)]
+            used_counties = [county_pair for county_pair in county_data if county_pair[0] in counties]
+        elif selection_mode.lower() == 'negative':
+            state_covid_data = state_covid_data[~state_covid_data['county'].isin(counties)]
+            used_counties = [county_pair for county_pair in county_data if county_pair[0] not in counties]
+        else:
+            raise ValueError(f'{selection_mode} is not a valid option for selection_mode! Use either positive or '
+                             f'negative!')
+    else:
+        used_counties = county_data
+
+    for county in used_counties:
         # The county FIPS is a 5 digit code. The first two digits refer to the state, the last three refer to the county
         county_fips = county[2][2:]
 
@@ -200,10 +217,45 @@ def main():
 
     if args.interactive:
         logger.info('Starting CoronaFramer in interactive mode')
-        state = input('Please enter the state you are interested in: ')
-        logger.info(f'Attempting to build frame for {state}')
+        print('IMPORTANT: You must enter the same amount of specifications across each category.\n'
+              'Ex. states=Nevada,California|counties=Clark$Alameda|selection_mode=positive,negative')
+        print('If entering multiple states, counties or variables. Please enter them as a comma seperated list with no'
+              ' spaces (Ex. Nevada,New York,Arizona).\n Seperate county lists for each state with $ '
+              '(Ex. Alameda,Contra Costa$Clark,White Pine. Enter state counties in the same order as states.')
+        states = input('Please enter the state(s) you are interested in: ')
+        counties = input('Please enter the county/counties you are interested in. For all counties, enter all: ')
+        print('For selection mode, enter either "positive" or "negative".\n Positive select will only select the listed'
+              ' counties.\n Negative select will choose everything except the listed counties.\n If entering multiple '
+              'states, separate the selection modes with commas with no spaces (Ex. positive,negative,positive)')
+        selection_mode = input('Please follow the above instructions to input your selection mode: ')
+        logger.info(f'Attempting to build frame(s) for {states}')
 
-        build_frame_for_state(state, interest_variables, rename_map=variable_name_map)
+        if ',' in states:
+            # Checks to see if the number of specifications are the same across all entries
+            sum_items = len(states.split(',')) + len(counties.split('$')) + len(selection_mode.split(','))
+            expected_sum = len(states.split(',')) * 3
+
+            if sum_items != expected_sum:
+                raise ValueError('You must enter the same amount of specifications across each category!')
+            else:
+                per_state_counties = [county.split(',') for county in counties.split('$')]
+                print(per_state_counties)
+                state_list = states.split(',')
+                sm_list = selection_mode.split(',')
+
+                for state, state_counties, state_sm in zip(state_list, per_state_counties, sm_list):
+                    print(f'Making frame for {state}')
+                    logger.info(f'Making frame for {state}')
+
+                    if state_counties[0].lower() == 'all':
+                        build_frame_for_state(state, interest_variables, counties='all',
+                                              selection_mode=state_sm, rename_map=variable_name_map)
+                    else:
+                        build_frame_for_state(state, interest_variables, counties=state_counties,
+                                              selection_mode=state_sm, rename_map=variable_name_map)
+
+                    print(f'Finished making frame for {state}')
+                    logger.info(f'Finished making frame for {state}')
 
         run_again = input('Finished output! Would you like to run the program again? (Y/N) ').lower() == 'y'
 
@@ -213,6 +265,9 @@ def main():
             print('Exiting...')
     else:
         logger.info('Starting CoronaFramer in CLI mode')
+        states = args.states
+        counties = args.counties[0]
+        print(f'{states}\n', f'{counties}')
 
 
 if __name__ == '__main__':
