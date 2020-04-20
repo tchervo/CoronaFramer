@@ -28,20 +28,26 @@ log_format = '%(levelname)s | %(asctime)s | %(message)s'
 logging.basicConfig(filename=log_path + 'coronaframer.log', format=log_format, filemode='w', level=logging.INFO)
 logger = logging.getLogger()
 
+epi_text = ' For places with spaces in their name, replace the space with a underscore (Ex. San_Francisco). ' \
+           'For entering multiple locations within one state, separate state entries with a comma. ' \
+           'For seperating locations between states, use % (Ex. Alameda,Contra_Costa%Clark,Washoe). This does not' \
+           ' apply to selection_mode. Only one selection mode can be applied for a single run.'
+
 arg_parser = argparse.ArgumentParser(
     description='Combine demographic data from the U.S Census with COVID-19 data',
-    prog='CoronaFramer'
+    prog='CoronaFramer',
+    epilog=epi_text
 )
 
-arg_parser.add_argument('-s', '--states', nargs='+', help='Specify the state or states to gather info on')
-arg_parser.add_argument('-c', '--counties', nargs='*', default='ALL',
-                        help='Specify the counties to include. Default is all', action='append')
+arg_parser.add_argument('-s', '--states', nargs=1, help='Specify the state or states to gather info on')
+arg_parser.add_argument('-c', '--counties', nargs=1, default=['all'],
+                        help='Specify the counties to include. Default is all')
 arg_parser.add_argument('-i', '--interactive', action='store_true',
                         help="Sets the program to run in interactive mode.")
-arg_parser.add_argument('-sm', '--select_mode', nargs=1, default='positive', choices=['positive', 'negative'],
+arg_parser.add_argument('-sm', '--select_mode', nargs=1, default=['positive'], choices=['positive', 'negative'],
                         help='Selection mode for counties. Positive selects only the specified counties, negative '
                              'select chooses all counties in the state except for those counties. Default is positive.')
-arg_parser.add_argument('-v', '--variables', nargs='*', default='DEFAULT',
+arg_parser.add_argument('-v', '--variables', nargs=1, default=['DEFAULT'],
                         help='Which census variables to select. Default is all default variables included with this '
                              'program')
 
@@ -279,6 +285,61 @@ def build_frame_for_state(state: str, variables: list, save=True, rename_map={},
     return state_covid_data
 
 
+def process_input(states: str, counties: str, selection_mode: str, from_cli=False):
+    """
+    Handles the input provided through either the CLI or interactive mode and processes the output
+    :param states: The user input for 'states'
+    :param counties: The user input for 'counties'
+    :param selection_mode: The user input for 'selection_mode'
+    """
+
+    if ',' in states:
+        # Checks to see if the number of specifications are the same across all entries
+        state_len = len(states.split(','))
+        county_len = len(counties.split('$'))
+        sm_len = len(selection_mode.split(','))
+        sum_items = state_len + county_len + sm_len
+        expected_sum = state_len * 3
+
+        if sum_items != expected_sum and not from_cli:
+            raise ValueError('You must enter the same amount of specifications across each category!')
+        else:
+            if from_cli:
+                states = states.replace('_', ' ')
+                counties = counties.replace('_', ' ')
+
+            per_state_counties = [county.split(',') for county in counties.split('$')]
+            state_list = states.split(',')
+            sm_list = selection_mode.split(',')
+
+            for state, state_counties, state_sm in zip(state_list, per_state_counties, sm_list):
+                print(f'Making frame for {state}')
+                logger.info(f'Making frame for {state}')
+
+                if state_counties[0].lower() == 'all':
+                    build_frame_for_state(state, interest_variables, counties='all',
+                                          selection_mode=state_sm, rename_map=variable_name_map)
+                else:
+                    build_frame_for_state(state, interest_variables, counties=state_counties,
+                                          selection_mode=state_sm, rename_map=variable_name_map)
+
+                print(f'Finished making frame for {state}')
+                logger.info(f'Finished making frame for {state}')
+    else:
+        if from_cli:
+            states = states.replace('_', ' ')
+            counties = counties.replace('_', ' ')
+
+        state_counties = counties.split(',')
+
+        if state_counties[0].lower() == 'all':
+            build_frame_for_state(states, interest_variables, counties='all',
+                                  selection_mode=selection_mode, rename_map=variable_name_map)
+        else:
+            build_frame_for_state(states, interest_variables, counties=state_counties,
+                                  selection_mode=selection_mode, rename_map=variable_name_map)
+
+
 def main():
     args = arg_parser.parse_args()
 
@@ -295,48 +356,16 @@ def main():
         if counties == 'all':
             selection_mode = 'positive'
         else:
-            print('For selection mode, enter either "positive" or "negative".\n Positive select will only select the listed'
-                ' counties.\n Negative select will choose everything except the listed counties.\n If entering multiple '
+            print(
+                'For selection mode, enter either "positive" or "negative".\n Positive select will only select the '
+                'listed '
+                'counties.\n Negative select will choose everything except the listed counties.\n If entering multiple '
                 'states, separate the selection modes with commas with no spaces (Ex. positive,negative,positive)')
             selection_mode = input('Please follow the above instructions to input your selection mode: ')
 
         logger.info(f'Attempting to build frame(s) for {states}')
 
-        if ',' in states:
-            # Checks to see if the number of specifications are the same across all entries
-            sum_items = len(states.split(',')) + len(counties.split('$')) + len(selection_mode.split(','))
-            expected_sum = len(states.split(',')) * 3
-
-            if sum_items != expected_sum:
-                raise ValueError('You must enter the same amount of specifications across each category!')
-            else:
-                per_state_counties = [county.split(',') for county in counties.split('$')]
-                print(per_state_counties)
-                state_list = states.split(',')
-                sm_list = selection_mode.split(',')
-
-                for state, state_counties, state_sm in zip(state_list, per_state_counties, sm_list):
-                    print(f'Making frame for {state}')
-                    logger.info(f'Making frame for {state}')
-
-                    if state_counties[0].lower() == 'all':
-                        build_frame_for_state(state, interest_variables, counties='all',
-                                              selection_mode=state_sm, rename_map=variable_name_map)
-                    else:
-                        build_frame_for_state(state, interest_variables, counties=state_counties,
-                                              selection_mode=state_sm, rename_map=variable_name_map)
-
-                    print(f'Finished making frame for {state}')
-                    logger.info(f'Finished making frame for {state}')
-        else:
-            state_counties = counties.split(',')
-
-            if state_counties[0].lower() == 'all':
-                build_frame_for_state(states, interest_variables, counties='all',
-                                      selection_mode=selection_mode, rename_map=variable_name_map)
-            else:
-                build_frame_for_state(states, interest_variables, counties=state_counties,
-                                      selection_mode=selection_mode, rename_map=variable_name_map)
+        process_input(states, counties, selection_mode)
 
         run_again = input('Finished output! Would you like to run the program again? (Y/N) ').lower() == 'y'
 
@@ -346,9 +375,13 @@ def main():
             print('Exiting...')
     else:
         logger.info('Starting CoronaFramer in CLI mode')
-        states = args.states
+        states = args.states[0]
         counties = args.counties[0]
-        print(f'{states}\n', f'{counties}')
+        selection_mode = args.select_mode[0]
+
+        process_input(states, counties, selection_mode, True)
+
+        print('Finished output!')
 
 
 if __name__ == '__main__':
